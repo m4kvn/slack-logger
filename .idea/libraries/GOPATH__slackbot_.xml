@@ -1,0 +1,23 @@
+<component name="libraryTable">
+  <library name="GOPATH &lt;slackbot&gt;">
+    <CLASSES>
+      <root url="file://$PROJECT_DIR$/../demoapp" />
+      <root url="file://$PROJECT_DIR$/../github.com" />
+      <root url="file://$PROJECT_DIR$/../mdget" />
+      <root url="file://$PROJECT_DIR$/../first_webapp" />
+      <root url="file://$PROJECT_DIR$/../Go-APIServer-Study" />
+      <root url="file://$PROJECT_DIR$/../mdview" />
+    </CLASSES>
+    <SOURCES>
+      <root url="file://$PROJECT_DIR$/../demoapp" />
+      <root url="file://$PROJECT_DIR$/../github.com" />
+      <root url="file://$PROJECT_DIR$/../mdget" />
+      <root url="file://$PROJECT_DIR$/../first_webapp" />
+      <root url="file://$PROJECT_DIR$/../Go-APIServer-Study" />
+      <root url="file://$PROJECT_DIR$/../mdview" />
+    </SOURCES>
+    <excluded>
+      <root url="file://$PROJECT_DIR$" />
+    </excluded>
+  </library>
+</component>
