@@ -78,33 +78,7 @@ const BaseSlackURL string = "https://slack.com/api/"
 
 func main() {
 	Token = os.Args[1]
-	values := url.Values{
-		"token":  {Token},
-		"pretty": {"1"},
-	}
-
-	res, err := http.Get(BaseSlackURL + "channels.list?" + values.Encode())
-
-	if err != nil {
-		fmt.Printf("%s\n", err)
-		return
-	} else {
-		defer res.Body.Close()
-	}
-
-	b, err := ioutil.ReadAll(res.Body)
-
-	data := new(ChannelsList)
-
-	if err := json.Unmarshal(b, data); err != nil {
-		fmt.Println("JSON Unmarshal error", err)
-		return
-	}
-
-	for _, c := range data.Channels {
-		fmt.Println(c.Name, c.Id)
-	}
-
+	channels := getChannels()
 	db, err := openDB("./slack.db")
 
 	if err != nil {
@@ -114,7 +88,15 @@ func main() {
 	defer db.Close()
 
 	createDBTable(db)
+	insertChannels(db, channels)
+	createChannelTables(db, channels)
 
+	//for _, message := range getChannelMessages(data.Channels[0]) {
+	//	fmt.Println(message.Text)
+	//}
+}
+
+func insertChannels(db *sql.DB, channels []Channel) {
 	tx, err := db.Begin()
 	stmt, err := tx.Prepare("insert into channels(id, name) values(?, ?)")
 
@@ -123,17 +105,17 @@ func main() {
 	}
 	defer stmt.Close()
 
-	for _, channel := range data.Channels {
+	for _, channel := range channels {
 		if _, err := stmt.Exec(channel.Id, channel.Name); err != nil {
 			// TODO: データ衝突時の処理を実装
-		} else {
-
 		}
 	}
 	tx.Commit()
+}
 
-	for _, message := range getChannelHistory(data.Channels[0]).Messages {
-		fmt.Println(message.Text)
+func createChannelTables(db *sql.DB, channels []Channel) {
+	for _, channel := range channels {
+		createChannelTable(db, channel)
 	}
 }
 
@@ -152,29 +134,55 @@ func createDBTable(db *sql.DB) {
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS channels (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL)")
 
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
 }
 
-func createChannelTable(db *sql.DB, id string) {
-	//_, err := db.Exec("CREATE TABLE IF NOT EXISTS #{id} (id )")
+func createChannelTable(db *sql.DB, channel Channel) {
+	stmt := "create table if not exists " + channel.Id + " (type text, user text, text text, ts text)"
+	_, err := db.Exec(stmt)
+
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 }
 
-func getChannelHistory(channel Channel) *ChannelHistory {
+func getSlackAPI(values url.Values, endpoint string) (b []byte, err error) {
+	res, err := http.Get(BaseSlackURL + endpoint + "?" + values.Encode())
+
+	if err != nil {
+		return nil, err
+	} else {
+		defer res.Body.Close()
+		return ioutil.ReadAll(res.Body)
+	}
+}
+
+func getChannels() []Channel {
+	values := url.Values{
+		"token":  {Token},
+		"pretty": {"1"},
+	}
+	b, _ := getSlackAPI(values, "channels.list")
+	data := new(ChannelsList)
+
+	if err := json.Unmarshal(b, data); err != nil {
+		fmt.Println("JSON Unmarshal error", err)
+		return nil
+	}
+
+	return data.Channels
+}
+
+func getChannelMessages(channel Channel) []Message {
 	values := url.Values{
 		"token":   {Token},
 		"channel": {channel.Id},
 		"pretty":  {"1"},
 	}
-	res, err := http.Get(BaseSlackURL + "channels.history?" + values.Encode())
-
-	if err != nil {
-		fmt.Printf("%s\n", err)
-		return nil
-	}
-	defer res.Body.Close()
-
-	b, err := ioutil.ReadAll(res.Body)
+	b, _ := getSlackAPI(values, "channels.history")
 	data := new(ChannelHistory)
 
 	if err := json.Unmarshal(b, data); err != nil {
@@ -182,5 +190,5 @@ func getChannelHistory(channel Channel) *ChannelHistory {
 		return nil
 	}
 
-	return data
+	return data.Messages
 }
