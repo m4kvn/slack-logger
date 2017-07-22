@@ -59,14 +59,31 @@ type OAuth struct {
 	UserId string `json:"user_id"`
 }
 
+type Message struct {
+	Type string `json:"type"`
+	User string `json:"user"`
+	Text string `json:"text"`
+	Ts   string `json:"ts"`
+}
+
+type ChannelHistory struct {
+	OK       bool `json:"ok"`
+	Messages []Message `json:"messages"`
+	HasMore  bool `json:"has_more"`
+}
+
+var Token string
+
+const BaseSlackURL string = "https://slack.com/api/"
+
 func main() {
-	token := os.Args[1]
+	Token = os.Args[1]
 	values := url.Values{
-		"token":  {token},
+		"token":  {Token},
 		"pretty": {"1"},
 	}
 
-	res, err := http.Get("https://slack.com/api/channels.list?" + values.Encode())
+	res, err := http.Get(BaseSlackURL + "channels.list?" + values.Encode())
 
 	if err != nil {
 		fmt.Printf("%s\n", err)
@@ -108,11 +125,16 @@ func main() {
 
 	for _, channel := range data.Channels {
 		if _, err := stmt.Exec(channel.Id, channel.Name); err != nil {
-			fmt.Println(err)
 			// TODO: データ衝突時の処理を実装
+		} else {
+
 		}
 	}
 	tx.Commit()
+
+	for _, message := range getChannelHistory(data.Channels[0]).Messages {
+		fmt.Println(message.Text)
+	}
 }
 
 func createDBFile(fileName string) {
@@ -127,9 +149,38 @@ func openDB(fileName string) (db *sql.DB, err error) {
 }
 
 func createDBTable(db *sql.DB) {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS channels (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL)`)
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS channels (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL)")
 
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func createChannelTable(db *sql.DB, id string) {
+	//_, err := db.Exec("CREATE TABLE IF NOT EXISTS #{id} (id )")
+}
+
+func getChannelHistory(channel Channel) *ChannelHistory {
+	values := url.Values{
+		"token":   {Token},
+		"channel": {channel.Id},
+		"pretty":  {"1"},
+	}
+	res, err := http.Get(BaseSlackURL + "channels.history?" + values.Encode())
+
+	if err != nil {
+		fmt.Printf("%s\n", err)
+		return nil
+	}
+	defer res.Body.Close()
+
+	b, err := ioutil.ReadAll(res.Body)
+	data := new(ChannelHistory)
+
+	if err := json.Unmarshal(b, data); err != nil {
+		fmt.Println("JSON Unmarshal error", err)
+		return nil
+	}
+
+	return data
 }
