@@ -89,11 +89,20 @@ func main() {
 
 	createDBTable(db)
 	insertChannels(db, channels)
-	createChannelTables(db, channels)
 
-	//for _, message := range getChannelMessages(data.Channels[0]) {
-	//	fmt.Println(message.Text)
-	//}
+	for _, channel := range channels {
+		tx, _ := db.Begin()
+		stmt, _ := tx.Prepare("insert into history(id, type, user, text, ts) values(?, ?, ?, ?, ?)")
+
+		for _, message := range getChannelMessages(channel) {
+			if _, err := stmt.Exec(channel.Id, message.Type, message.User, message.Text, message.Ts); err != nil {
+				// TODO: データ衝突時の処理を実装
+			}
+		}
+
+		tx.Commit()
+		stmt.Close()
+	}
 }
 
 func insertChannels(db *sql.DB, channels []Channel) {
@@ -113,12 +122,6 @@ func insertChannels(db *sql.DB, channels []Channel) {
 	tx.Commit()
 }
 
-func createChannelTables(db *sql.DB, channels []Channel) {
-	for _, channel := range channels {
-		createChannelTable(db, channel)
-	}
-}
-
 func createDBFile(fileName string) {
 	if _, err := os.Stat(fileName); err != nil {
 		os.Create(fileName)
@@ -131,21 +134,41 @@ func openDB(fileName string) (db *sql.DB, err error) {
 }
 
 func createDBTable(db *sql.DB) {
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS channels (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL)")
-
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-}
-
-func createChannelTable(db *sql.DB, channel Channel) {
-	stmt := "create table if not exists " + channel.Id + " (type text, user text, text text, ts text)"
+	stmt := `
+	create table if not exists channels (
+	id text not null primary key,
+	name text not null,
+	ts text
+	)
+	`
 	_, err := db.Exec(stmt)
 
 	if err != nil {
 		fmt.Println(err)
-		return
+	}
+
+	stmt = `
+	create table if not exists history (
+	id text not null,
+	type text not null,
+	user text not null,
+	text text,
+	ts text not null
+	)
+	`
+
+	_, err = db.Exec(stmt)
+
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	stmt = "create index if not exists id_ts on history(id, ts)"
+
+	_, err = db.Exec(stmt)
+
+	if err != nil {
+		fmt.Println(err)
 	}
 }
 
