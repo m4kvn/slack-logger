@@ -89,18 +89,56 @@ func main() {
 
 	createDBTable(db)
 	insertChannels(db, channels)
+	insertHistory(db, channels)
 
+	sendCompleteMessage()
+}
+
+func sendSlackMessage(text string) {
+	values := url.Values{}
+	values.Add("token", Token)
+	values.Add("channel", "C6CEVKVMJ")
+	values.Add("text", text)
+	values.Add("as_user", "false")
+	values.Add("icon_emoji", ":banana:")
+	values.Add("username", "Slack Logger")
+
+	http.PostForm(BaseSlackURL + "chat.postMessage", values)
+}
+
+func sendCompleteMessage() {
+	sendSlackMessage("Complete log collection.")
+}
+
+func insertHistory(db *sql.DB, channels []Channel) {
 	for _, channel := range channels {
-		tx, _ := db.Begin()
-		stmt, _ := tx.Prepare("insert into history(id, type, user, text, ts) values(?, ?, ?, ?, ?)")
+		stmt, _ := db.Prepare("select ts from channels where id = ?")
+		var ts string
+		stmt.QueryRow(channel.Id).Scan(&ts)
+		stmt.Close()
 
-		for _, message := range getChannelMessages(channel) {
+		tx, _ := db.Begin()
+		stmt, _ = tx.Prepare("insert into history(id, type, user, text, ts) values(?, ?, ?, ?, ?)")
+		messages := getChannelMessages(channel, ts)
+
+		fmt.Println(channel.Id, channel.Name, len(messages), ts)
+
+		for _, message := range messages {
 			if _, err := stmt.Exec(channel.Id, message.Type, message.User, message.Text, message.Ts); err != nil {
 				// TODO: データ衝突時の処理を実装
 			}
 		}
 
 		tx.Commit()
+		stmt.Close()
+
+		stmt, _ = db.Prepare("select max(ts) from history where id = ?")
+		var tsNew string
+		stmt.QueryRow(channel.Id).Scan(&tsNew)
+		stmt.Close()
+
+		stmt, _ = db.Prepare("update channels set ts = ? where id = ?")
+		stmt.Exec(tsNew, channel.Id)
 		stmt.Close()
 	}
 }
@@ -199,12 +237,15 @@ func getChannels() []Channel {
 	return data.Channels
 }
 
-func getChannelMessages(channel Channel) []Message {
-	values := url.Values{
-		"token":   {Token},
-		"channel": {channel.Id},
-		"pretty":  {"1"},
+func getChannelMessages(channel Channel, ts string) []Message {
+	values := url.Values{}
+	values.Add("token", Token)
+	values.Add("channel", channel.Id)
+	values.Add("count", "1000")
+	if ts != "" {
+		values.Add("oldest", ts)
 	}
+	values.Add("pretty", "1")
 	b, _ := getSlackAPI(values, "channels.history")
 	data := new(ChannelHistory)
 
