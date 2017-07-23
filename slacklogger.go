@@ -90,24 +90,6 @@ func main() {
 	createDBTable(db)
 	insertChannels(db, channels)
 	insertHistory(db, channels)
-
-	sendCompleteMessage()
-}
-
-func sendSlackMessage(text string) {
-	values := url.Values{}
-	values.Add("token", Token)
-	values.Add("channel", "C6CEVKVMJ")
-	values.Add("text", text)
-	values.Add("as_user", "false")
-	values.Add("icon_emoji", ":banana:")
-	values.Add("username", "Slack Logger")
-
-	http.PostForm(BaseSlackURL + "chat.postMessage", values)
-}
-
-func sendCompleteMessage() {
-	sendSlackMessage("Complete log collection.")
 }
 
 func insertHistory(db *sql.DB, channels []Channel) {
