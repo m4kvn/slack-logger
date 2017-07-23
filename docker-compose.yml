@@ -1,0 +1,6 @@
+slacklogger:
+  build: .
+  environment:
+    - TOKEN=
+  volumes:
+    - ".:/go/src/app"
