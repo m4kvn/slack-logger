@@ -12,6 +12,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"time"
 	"strconv"
+	"github.com/jasonlvhit/gocron"
 )
 
 type Topic struct {
@@ -90,6 +91,12 @@ var updateChannels map[string]int
 const BaseSlackURL string = "https://slack.com/api/"
 
 func main() {
+	gocron.Every(1).Day().At("08:00").Do(runLogger)
+	<-gocron.Start()
+}
+
+func runLogger() {
+	fmt.Println("start!")
 	switch len(os.Args) {
 	case 1:
 		fmt.Println("Please enter an argument: <slack_api_Token> <notification_slack_channel_name>")
