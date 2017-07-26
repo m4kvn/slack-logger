@@ -10,6 +10,8 @@ import (
 	"log"
 	"database/sql"
 	_ "github.com/mattn/go-sqlite3"
+	"time"
+	"strconv"
 )
 
 type Topic struct {
@@ -72,12 +74,32 @@ type ChannelHistory struct {
 	HasMore  bool `json:"has_more"`
 }
 
+type Attachment struct {
+	Text           string `json:"text"`
+	Fallback       string `json:"fallback"`
+	CallbackId     string `json:"callback_id"`
+	Color          string `json:"color"`
+	AttachmentType string `json:"attachment_type"`
+	Pretext        string `json:"pretext"`
+}
+
 var Token string
+var notificationChannelName string
+var updateChannels map[string]int
 
 const BaseSlackURL string = "https://slack.com/api/"
 
 func main() {
-	Token = os.Args[1]
+	switch len(os.Args) {
+	case 1:
+		fmt.Println("Please enter an argument: <slack_api_Token> <notification_slack_channel_name>")
+		return
+	case 2:
+		Token = os.Args[1]
+	case 3:
+		Token = os.Args[1]
+		notificationChannelName = os.Args[2]
+	}
 	channels := getChannels()
 	db, err := openDB("./slack.db")
 
@@ -90,11 +112,57 @@ func main() {
 	createDBTable(db)
 	insertChannels(db, channels)
 	insertHistory(db, channels)
+	notification(db, notificationChannelName)
+}
+
+func notification(db *sql.DB, notificationChannelName string) {
+	if notificationChannelName != "" {
+		var channelId string
+		stmt, _ := db.Prepare("SELECT id FROM channels WHERE name = ?")
+		stmt.QueryRow(notificationChannelName).Scan(&channelId)
+		stmt.Close()
+
+		if channelId == "" {
+			fmt.Println("Not found notification channel: ", notificationChannelName)
+			return
+		}
+
+		text := ""
+		if len(updateChannels) > 0 {
+			text += "Update channels:\n"
+			for channelName := range updateChannels {
+				fmt.Println(channelName, strconv.Itoa(updateChannels[channelName]))
+				text += "\t" + channelName + ": +" + strconv.Itoa(updateChannels[channelName]) + "\n"
+			}
+		}
+
+		attachments := []Attachment{
+			Attachment{
+				Fallback: "Required plain-text summary of the attachment.",
+				Color:    "#36a64f",
+				Pretext:  "Complete at " + time.Now().String() + "\n",
+				Text:     text,
+			},
+		}
+
+		attachmentsBytes, _ := json.Marshal(attachments)
+
+		values := url.Values{}
+		values.Add("token", Token)
+		values.Add("channel", channelId)
+		values.Add("text", "")
+		values.Add("icon_emoji", ":banana:")
+		values.Add("username", "Slack Logger")
+		values.Add("attachments", string(attachmentsBytes))
+		http.PostForm(BaseSlackURL+"chat.postMessage?", values)
+	}
 }
 
 func insertHistory(db *sql.DB, channels []Channel) {
+	updateChannels = make(map[string]int)
+
 	for _, channel := range channels {
-		stmt, _ := db.Prepare("select ts from channels where id = ?")
+		stmt, _ := db.Prepare("SELECT ts FROM channels WHERE id = ?")
 		var ts string
 		stmt.QueryRow(channel.Id).Scan(&ts)
 		stmt.Close()
@@ -103,6 +171,9 @@ func insertHistory(db *sql.DB, channels []Channel) {
 		stmt, _ = tx.Prepare("insert into history(id, type, user, text, ts) values(?, ?, ?, ?, ?)")
 		messages := getChannelMessages(channel, ts)
 
+		if len(messages) > 0 {
+			updateChannels[channel.Name] = len(messages)
+		}
 		fmt.Println(channel.Id, channel.Name, len(messages), ts)
 
 		for _, message := range messages {
@@ -114,12 +185,12 @@ func insertHistory(db *sql.DB, channels []Channel) {
 		tx.Commit()
 		stmt.Close()
 
-		stmt, _ = db.Prepare("select max(ts) from history where id = ?")
+		stmt, _ = db.Prepare("SELECT max(ts) FROM history WHERE id = ?")
 		var tsNew string
 		stmt.QueryRow(channel.Id).Scan(&tsNew)
 		stmt.Close()
 
-		stmt, _ = db.Prepare("update channels set ts = ? where id = ?")
+		stmt, _ = db.Prepare("UPDATE channels SET ts = ? WHERE id = ?")
 		stmt.Exec(tsNew, channel.Id)
 		stmt.Close()
 	}

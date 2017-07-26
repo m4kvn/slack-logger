@@ -15,9 +15,10 @@ Slackのチャンネル毎にメッセージをSQLite3に保存する。<br />
 
 1. Slack API Token を取得する
 1. `docker-compose.yml` の `TOKEN=` に取得したものを記述
+1. `docker-compose.yml` の `NOTIFICATION=` に通知したいチャンネル名を記述
 1. `docker-compose up` を実行
 1. `slack.db` にデータが保存される
 
 ### Goで直接実行
 
-1. `go run slacklogger.go <TOKEN>`
+1. `go run slacklogger.go <slack_api_token> <notification_channel_name>`

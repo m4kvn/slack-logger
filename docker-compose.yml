@@ -2,5 +2,6 @@ slacklogger:
   build: .
   environment:
     - TOKEN=
+    - NOTIFICATION=
   volumes:
     - ".:/go/src/app"
