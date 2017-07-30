@@ -2,3 +2,5 @@
 \.idea/
 
 slack\.db
+
+slack-logger\.log

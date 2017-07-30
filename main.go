@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"net/url"
 	"io/ioutil"
@@ -14,6 +13,7 @@ import (
 	"strconv"
 	"github.com/jasonlvhit/gocron"
 	"flag"
+	"io"
 )
 
 type Topic struct {
@@ -94,6 +94,14 @@ var updateChannels map[string]int
 const BaseSlackURL string = "https://slack.com/api/"
 
 func main() {
+	logfile, err := os.OpenFile("./slack-logger.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		log.Fatal("cannnot open slack-logger.log:", err.Error())
+	}
+	defer logfile.Close()
+	log.SetOutput(io.MultiWriter(logfile, os.Stdout))
+	log.SetFlags(log.Ldate | log.Ltime)
+
 	log.Println("slack-logger start")
 
 	flag.StringVar(&token, "token", "", "Slack API Token")
@@ -101,9 +109,9 @@ func main() {
 	flag.StringVar(&notificationTime, "time", "08:00", "notification time")
 	flag.Parse()
 
-	fmt.Println("token: ", token)
-	fmt.Println("notificationChannelName: ", channelName)
-	fmt.Println("notificationTime: ", notificationTime)
+	log.Println("token:", token)
+	log.Println("notificationChannelName:", channelName)
+	log.Println("notificationTime:", notificationTime)
 
 	gocron.Every(1).Day().At(notificationTime).Do(runLogger)
 	<-gocron.Start()
@@ -136,7 +144,7 @@ func notification(db *sql.DB, notificationChannelName string) {
 		stmt.Close()
 
 		if channelId == "" {
-			fmt.Println("Not found notification channel: ", notificationChannelName)
+			log.Println("Not found notification channel: ", notificationChannelName)
 			return
 		}
 
@@ -186,7 +194,7 @@ func insertHistory(db *sql.DB, channels []Channel) {
 		if len(messages) > 0 {
 			updateChannels[channel.Name] = len(messages)
 		}
-		fmt.Println(channel.Id, channel.Name, len(messages), ts)
+		log.Println(channel.Id, channel.Name, len(messages), ts)
 
 		for _, message := range messages {
 			if _, err := stmt.Exec(channel.Id, message.Type, message.User, message.Text, message.Ts); err != nil {
@@ -247,7 +255,7 @@ func createDBTable(db *sql.DB) {
 	_, err := db.Exec(stmt)
 
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 	}
 
 	stmt = `
@@ -263,7 +271,7 @@ func createDBTable(db *sql.DB) {
 	_, err = db.Exec(stmt)
 
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 	}
 
 	stmt = "create index if not exists id_ts on history(id, ts)"
@@ -271,7 +279,7 @@ func createDBTable(db *sql.DB) {
 	_, err = db.Exec(stmt)
 
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 	}
 }
 
@@ -295,7 +303,7 @@ func getChannels() []Channel {
 	data := new(ChannelsList)
 
 	if err := json.Unmarshal(b, data); err != nil {
-		fmt.Println("JSON Unmarshal error", err)
+		log.Println("JSON Unmarshal error", err)
 		return nil
 	}
 
@@ -315,7 +323,7 @@ func getChannelMessages(channel Channel, ts string) []Message {
 	data := new(ChannelHistory)
 
 	if err := json.Unmarshal(b, data); err != nil {
-		fmt.Println("JSON Unmarshal error", err)
+		log.Println("JSON Unmarshal error", err)
 		return nil
 	}
 
