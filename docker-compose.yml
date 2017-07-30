@@ -2,6 +2,7 @@ slacklogger:
   build: .
   environment:
     - TOKEN=
-    - NOTIFICATION=
+    - CHANNEL=
+    - TIME=
   volumes:
-    - ".:/go/src/app"
+    - ".:/app"
