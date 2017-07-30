@@ -13,6 +13,7 @@ import (
 	"time"
 	"strconv"
 	"github.com/jasonlvhit/gocron"
+	"flag"
 )
 
 type Topic struct {
@@ -84,29 +85,32 @@ type Attachment struct {
 	Pretext        string `json:"pretext"`
 }
 
-var Token string
-var notificationChannelName string
+var token string
+var channelName string
+var notificationTime string
+
 var updateChannels map[string]int
 
 const BaseSlackURL string = "https://slack.com/api/"
 
 func main() {
-	gocron.Every(1).Day().At("08:00").Do(runLogger)
+	log.Println("slack-logger start")
+
+	flag.StringVar(&token, "token", "", "Slack API Token")
+	flag.StringVar(&channelName, "channel", "general", "notification slack channel name")
+	flag.StringVar(&notificationTime, "time", "08:00", "notification time")
+	flag.Parse()
+
+	fmt.Println("token: ", token)
+	fmt.Println("notificationChannelName: ", channelName)
+	fmt.Println("notificationTime: ", notificationTime)
+
+	gocron.Every(1).Day().At(notificationTime).Do(runLogger)
 	<-gocron.Start()
 }
 
 func runLogger() {
-	fmt.Println("start!")
-	switch len(os.Args) {
-	case 1:
-		fmt.Println("Please enter an argument: <slack_api_Token> <notification_slack_channel_name>")
-		return
-	case 2:
-		Token = os.Args[1]
-	case 3:
-		Token = os.Args[1]
-		notificationChannelName = os.Args[2]
-	}
+	log.Println("slack-logger run")
 	channels := getChannels()
 	db, err := openDB("./slack.db")
 
@@ -119,7 +123,9 @@ func runLogger() {
 	createDBTable(db)
 	insertChannels(db, channels)
 	insertHistory(db, channels)
-	notification(db, notificationChannelName)
+	notification(db, channelName)
+
+	log.Printf("slack-logger finish\n")
 }
 
 func notification(db *sql.DB, notificationChannelName string) {
@@ -138,13 +144,12 @@ func notification(db *sql.DB, notificationChannelName string) {
 		if len(updateChannels) > 0 {
 			text += "Update channels:\n"
 			for channelName := range updateChannels {
-				fmt.Println(channelName, strconv.Itoa(updateChannels[channelName]))
 				text += "\t" + channelName + ": +" + strconv.Itoa(updateChannels[channelName]) + "\n"
 			}
 		}
 
 		attachments := []Attachment{
-			Attachment{
+			{
 				Fallback: "Required plain-text summary of the attachment.",
 				Color:    "#36a64f",
 				Pretext:  "Complete at " + time.Now().String() + "\n",
@@ -155,7 +160,7 @@ func notification(db *sql.DB, notificationChannelName string) {
 		attachmentsBytes, _ := json.Marshal(attachments)
 
 		values := url.Values{}
-		values.Add("token", Token)
+		values.Add("token", token)
 		values.Add("channel", channelId)
 		values.Add("text", "")
 		values.Add("icon_emoji", ":banana:")
@@ -283,7 +288,7 @@ func getSlackAPI(values url.Values, endpoint string) (b []byte, err error) {
 
 func getChannels() []Channel {
 	values := url.Values{
-		"token":  {Token},
+		"token":  {token},
 		"pretty": {"1"},
 	}
 	b, _ := getSlackAPI(values, "channels.list")
@@ -299,7 +304,7 @@ func getChannels() []Channel {
 
 func getChannelMessages(channel Channel, ts string) []Message {
 	values := url.Values{}
-	values.Add("token", Token)
+	values.Add("token", token)
 	values.Add("channel", channel.Id)
 	values.Add("count", "1000")
 	if ts != "" {
