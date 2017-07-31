@@ -1,8 +1,9 @@
 slacklogger:
-  build: .
+  image: masahirosaito/golang
   environment:
-    - TOKEN=
-    - CHANNEL=
-    - TIME=
+    - SLACK_API_TOKEN=
+    - NOTIFICATION_CHANNEL=
+    - NOTIFICATION_TIME=
   volumes:
-    - ".:/app"
+    - ".:/go/src/app"
+    - "./go:/go"

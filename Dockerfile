@@ -1,12 +1,10 @@
 FROM alpine
 MAINTAINER masahirosaito
-RUN apk --update add go git libc-dev tzdata && \
-    cp /usr/share/zoneinfo/Asia/Tokyo /etc/localtime && \
+RUN apk --update add go git libc-dev tzdata
+RUN cp /usr/share/zoneinfo/Asia/Tokyo /etc/localtime && \
     apk del tzdata && \
-    rm -rf /var/cache/apk/*
-COPY main.go /root/go/src/slack-logger/main.go
-RUN go get -t slack-logger && \
-    go install slack-logger && \
-    mkdir app
-WORKDIR app
-ENTRYPOINT /root/go/bin/slack-logger -token $TOKEN -channel $CHANNEL -time $TIME
+    rm -rf /var/cache/apk/* && \
+    mkdir -p /go/src/app
+ENV GOPATH=/go
+WORKDIR /go/src/app
+ENTRYPOINT go get -t && go build && ./app

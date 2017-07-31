@@ -104,9 +104,9 @@ func main() {
 
 	log.Println("slack-logger start")
 
-	flag.StringVar(&token, "token", "", "Slack API Token")
-	flag.StringVar(&channelName, "channel", "general", "notification slack channel name")
-	flag.StringVar(&notificationTime, "time", "08:00", "notification time")
+	flag.StringVar(&token, "token", os.Getenv("SLACK_API_TOKEN"), "Slack API Token")
+	flag.StringVar(&channelName, "channel", os.Getenv("NOTIFICATION_CHANNEL"), "notification slack channel name")
+	flag.StringVar(&notificationTime, "time", os.Getenv("NOTIFICATION_TIME"), "notification time")
 	flag.Parse()
 
 	log.Println("token:", token)
