@@ -76,3 +76,7 @@ func (api *API) GetChannelMessages(channel Channel, ts string) []Message {
 
 	return data.Messages
 }
+
+func (api *API) PostSlackAPI(values url.Values, endpoint string) {
+	http.PostForm(baseSlackURL+endpoint+"?", values)
+}
