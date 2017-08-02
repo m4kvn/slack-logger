@@ -1,33 +1,31 @@
-version: '2'
-services:
-  slacklogger:
-    image: masahirosaito/golang
-    environment:
-      SLACK_API_TOKEN:
-      NOTIFICATION_CHANNEL:
-      NOTIFICATION_TIME:
-      DB_HOST: db
-      DB_PORT: 3306
-      DB_USER: username
-      DB_PASS: password
-      DB_NAME: slack_logger
-    volumes:
-      - ".:/go/src/app"
-      - "./go:/go"
-    links:
-      - db
-  db:
-    image: mysql
-    volumes_from:
-      - data
-    volumes:
-      - "./init/mysql:/docker-entrypoint-initdb.d"
-    environment:
-      MYSQL_USER: username
-      MYSQL_PASSWORD: password
-      MYSQL_ROOT_PASSWORD: password
-      MYSQL_DATABASE: slack_logger
-  data:
-    image: busybox
-    volumes:
-      - "./data/mysql:/var/lib/mysql"
+slacklogger:
+  image: masahirosaito/golang
+  environment:
+    SLACK_API_TOKEN:
+    NOTIFICATION_CHANNEL:
+    NOTIFICATION_TIME:
+    DB_HOST: db
+    DB_PORT: 3306
+    DB_USER: username
+    DB_PASS: password
+    DB_NAME: slack_logger
+  volumes:
+    - ".:/go/src/app"
+    - "./go:/go"
+  links:
+    - db
+db:
+  image: mysql
+  volumes_from:
+    - data
+  volumes:
+    - "./init/mysql:/docker-entrypoint-initdb.d"
+  environment:
+    MYSQL_USER: username
+    MYSQL_PASSWORD: password
+    MYSQL_ROOT_PASSWORD: password
+    MYSQL_DATABASE: slack_logger
+data:
+  image: busybox
+  volumes:
+    - "./data/mysql:/var/lib/mysql"
