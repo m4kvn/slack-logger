@@ -1,331 +1,241 @@
 package main
 
 import (
-	"net/http"
-	"net/url"
-	"io/ioutil"
-	"encoding/json"
 	"os"
 	"log"
-	"database/sql"
-	_ "github.com/mattn/go-sqlite3"
-	"time"
-	"strconv"
-	"github.com/jasonlvhit/gocron"
 	"flag"
 	"io"
+	"github.com/jasonlvhit/gocron"
+	"github.com/ziutek/mymysql/mysql"
+	_ "github.com/ziutek/mymysql/native"
+	"time"
+	"errors"
+	"net/url"
+	"encoding/json"
+	"strconv"
+	"fmt"
 )
 
-type Topic struct {
-	Value   string `json:"value"`
-	Creator string `json:"Creator"`
-	LastSet uint `json:"last_set"`
-}
-
-type Purpose struct {
-	Value   string `json:"value"`
-	Creator string `json:"creator"`
-	LastSet uint `json:"last_set"`
-}
-
-type Channel struct {
-	Id             string `json:"id"`
-	Name           string `json:"name"`
-	IsChannel      bool `json:"is_channel"`
-	Created        uint `json:"created"`
-	Creator        string `json:"creator"`
-	IsArchived     bool `json:"is_archived"`
-	IsGeneral      bool `json:"is_general"`
-	NameNormalized string `json:"name_normalized"`
-	IsShared       bool `json:"is_shared"`
-	IsOrgShared    bool `json:"is_org_shared"`
-	IsMember       bool `json:"is_member"`
-	IsPrivate      bool `json:"is_private"`
-	IsMpim         bool `json:"is_mpim"`
-	Members        []string `json:"members"`
-	Topic          Topic `json:"topic"`
-	Purpose        Purpose `json:"purpose"`
-	PreviousNames  []string `json:"previous_names"`
-	NumMembers     int `json:"num_members"`
-}
-
-type ChannelsList struct {
-	Ok       bool `json:"ok"`
-	Channels []Channel `json:"channels"`
-}
-
-type OAuth struct {
-	OK     bool `json:"ok"`
-	Url    string `json:"url"`
-	Team   string `json:"team"`
-	User   string `json:"user"`
-	TeamId string `json:"team_id"`
-	UserId string `json:"user_id"`
-}
-
-type Message struct {
-	Type string `json:"type"`
-	User string `json:"user"`
-	Text string `json:"text"`
-	Ts   string `json:"ts"`
-}
-
-type ChannelHistory struct {
-	OK       bool `json:"ok"`
-	Messages []Message `json:"messages"`
-	HasMore  bool `json:"has_more"`
-}
-
-type Attachment struct {
-	Text           string `json:"text"`
-	Fallback       string `json:"fallback"`
-	CallbackId     string `json:"callback_id"`
-	Color          string `json:"color"`
-	AttachmentType string `json:"attachment_type"`
-	Pretext        string `json:"pretext"`
-}
-
-var token string
-var channelName string
-var notificationTime string
-
-var updateChannels map[string]int
-
-const BaseSlackURL string = "https://slack.com/api/"
-
 func main() {
-	logfile, err := os.OpenFile("./slack-logger.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
-	if err != nil {
-		log.Fatal("cannnot open slack-logger.log:", err.Error())
-	}
-	defer logfile.Close()
-	log.SetOutput(io.MultiWriter(logfile, os.Stdout))
-	log.SetFlags(log.Ldate | log.Ltime)
+	defer getLogFile("./slack-logger.log").Close()
 
 	log.Println("slack-logger start")
-
-	flag.StringVar(&token, "token", os.Getenv("SLACK_API_TOKEN"), "Slack API Token")
-	flag.StringVar(&channelName, "channel", os.Getenv("NOTIFICATION_CHANNEL"), "notification slack channel name")
-	flag.StringVar(&notificationTime, "time", os.Getenv("NOTIFICATION_TIME"), "notification time")
+	token := flag.String("token", os.Getenv("SLACK_API_TOKEN"), "Set Slack API Token")
+	channel := flag.String("channel", os.Getenv("NOTIFICATION_CHANNEL"), "Set notification slack channel name")
+	notiTime := flag.String("time", os.Getenv("NOTIFICATION_TIME"), "Set notification time")
+	dbhost := flag.String("dbhost", os.Getenv("DB_HOST"), "Set DB host")
+	dbport := flag.String("dbport", os.Getenv("DB_PORT"), "Set DB port")
+	dbuser := flag.String("dbuser", os.Getenv("DB_USER"), "Set DB user")
+	dbpass := flag.String("dbpass", os.Getenv("DB_PASS"), "Set DB pass")
+	dbname := flag.String("dbname", os.Getenv("DB_NAME"), "Set DB name")
 	flag.Parse()
 
-	log.Println("token:", token)
-	log.Println("notificationChannelName:", channelName)
-	log.Println("notificationTime:", notificationTime)
+	db := connectDB(dbhost, dbport, dbuser, dbpass, dbname)
+	defer db.Close()
 
-	gocron.Every(1).Day().At(notificationTime).Do(runLogger)
+	slackAPI := API{
+		Token: *token,
+		Notification: Notification{
+			ChannelName: *channel,
+			Time:        *notiTime,
+		},
+	}
+
+	log.Println("token:", slackAPI.Token)
+	log.Println("notificationChannelName:", slackAPI.Notification.ChannelName)
+	log.Println("notificationTime:", slackAPI.Notification.Time)
+
+	runLogger(db, slackAPI)
+
+	gocron.Every(1).Day().At(slackAPI.Notification.Time).Do(runLogger, db, slackAPI)
 	<-gocron.Start()
 }
 
-func runLogger() {
-	log.Println("slack-logger run")
-	channels := getChannels()
-	db, err := openDB("./slack.db")
+func connectDB(dbhost *string, dbport *string, dbuser *string, dbpass *string, dbname *string) mysql.Conn {
+	db := mysql.New("tcp", "", *dbhost + ":" + *dbport, *dbuser, *dbpass, *dbname)
 
-	if err != nil {
-		log.Fatal(err)
-		return
+	connected := make(chan bool, 1)
+	timeout := make(chan bool, 1)
+
+	go func(s chan<- bool) {
+		for {
+			err := db.Connect()
+			if err == nil {
+				s <- true
+				break
+			} else {
+				time.Sleep(2 * time.Second)
+			}
+		}
+	}(connected)
+
+	go func(s chan bool, t chan bool) {
+		t <- true
+		time.Sleep(20 * time.Second)
+		if <-t {
+			log.Println("Database connection was timeout.")
+			s <- false
+		}
+	}(connected, timeout)
+
+	log.Println("Waiting for database connection.")
+	if <-connected {
+		<-timeout
+		timeout <- false
+		log.Println("Connected the database.")
+	} else {
+		log.Println("Cannot connect the database.")
+		os.Exit(1)
 	}
-	defer db.Close()
 
-	createDBTable(db)
-	insertChannels(db, channels)
-	insertHistory(db, channels)
-	notification(db, channelName)
+	return db
+}
+
+func getLogFile(filePath string) *os.File {
+	logfile, _ := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	log.SetOutput(io.MultiWriter(logfile, os.Stdout))
+	log.SetFlags(log.Ldate | log.Ltime)
+	return logfile
+}
+
+func runLogger(db mysql.Conn, api API) {
+	log.Println("slack-logger run")
+	api.UpdateChannels()
+
+	newChannels := insertChannels(db, api)
+	updates := insertHistory(db, api)
+	go notification(api, newChannels, updates)
+
+	if len(newChannels) > 0 {
+		log.Println("New Channels:")
+		for _, c := range newChannels {
+			log.Println("Name:", c.Name, "Created:", time.Unix(c.Created, 0))
+		}
+	}
+
+	if len(updates) > 0 {
+		log.Println("Update Channels:")
+		for key := range updates {
+			log.Println("Name:", key, "Updates:", updates[key])
+		}
+	}
 
 	log.Printf("slack-logger finish\n")
 }
 
-func notification(db *sql.DB, notificationChannelName string) {
-	if notificationChannelName != "" {
-		var channelId string
-		stmt, _ := db.Prepare("SELECT id FROM channels WHERE name = ?")
-		stmt.QueryRow(notificationChannelName).Scan(&channelId)
-		stmt.Close()
-
-		if channelId == "" {
-			log.Println("Not found notification channel: ", notificationChannelName)
-			return
-		}
-
-		text := ""
-		if len(updateChannels) > 0 {
-			text += "Update channels:\n"
-			for channelName := range updateChannels {
-				text += "\t" + channelName + ": +" + strconv.Itoa(updateChannels[channelName]) + "\n"
-			}
-		}
-
-		attachments := []Attachment{
-			{
-				Fallback: "Required plain-text summary of the attachment.",
-				Color:    "#36a64f",
-				Pretext:  "Complete at " + time.Now().String() + "\n",
-				Text:     text,
-			},
-		}
-
-		attachmentsBytes, _ := json.Marshal(attachments)
-
-		values := url.Values{}
-		values.Add("token", token)
-		values.Add("channel", channelId)
-		values.Add("text", "")
-		values.Add("icon_emoji", ":banana:")
-		values.Add("username", "Slack Logger")
-		values.Add("attachments", string(attachmentsBytes))
-		http.PostForm(BaseSlackURL+"chat.postMessage?", values)
+func notification(api API, newChannels []Channel, updates map[string]int) {
+	if api.Notification.ChannelName == "" {
+		return
 	}
+
+	notificationChannel, err := getNotificationChannel(api)
+
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	text := ""
+	if len(newChannels) > 0 {
+		text += "New channels:\n"
+		for _, c := range newChannels {
+			text += "\t<#" + c.Id + "> was created at " + getTimeStr(time.Unix(c.Created, 0)) + "\n"
+		}
+		text += "\n"
+	}
+
+	if len(updates) > 0 {
+		text += "Update channels:\n"
+		for key := range updates {
+			text += "\t<#" + key + ">: " + strconv.Itoa(updates[key]) + "\n"
+		}
+		text += "\n"
+	}
+
+	attachments := []Attachment{
+		{
+			Fallback: "Required plain-text summary of the attachment.",
+			Color:    "#36a64f",
+			Pretext:  "Completed at " + getTimeStr(time.Now()) + "\n",
+			Text:     text,
+		},
+	}
+
+	attachmentsBytes, _ := json.Marshal(attachments)
+
+	values := url.Values{}
+	values.Add("token", api.Token)
+	values.Add("channel", notificationChannel.Id)
+	values.Add("text", "")
+	values.Add("icon_emoji", ":banana:")
+	values.Add("username", "Slack Logger")
+	values.Add("attachments", string(attachmentsBytes))
+	api.PostSlackAPI(values, "chat.postMessage")
+
+	log.Println("Complete notification.")
 }
 
-func insertHistory(db *sql.DB, channels []Channel) {
-	updateChannels = make(map[string]int)
+func getTimeStr(t time.Time) string {
+	return fmt.Sprintf("%04d/%02d/%02d %02d:%02d:%02d",
+		t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
+}
 
-	for _, channel := range channels {
-		stmt, _ := db.Prepare("SELECT ts FROM channels WHERE id = ?")
-		var ts string
-		stmt.QueryRow(channel.Id).Scan(&ts)
-		stmt.Close()
+func getNotificationChannel(api API) (Channel, error) {
+	for _, c := range api.Channels {
+		if c.Name == api.Notification.ChannelName {
+			return c, nil
+		}
+	}
+	return Channel{}, errors.New("Not fount notification channel (" + api.Notification.ChannelName + ")")
+}
 
-		tx, _ := db.Begin()
-		stmt, _ = tx.Prepare("insert into history(id, type, user, text, ts) values(?, ?, ?, ?, ?)")
-		messages := getChannelMessages(channel, ts)
+func insertChannels(db mysql.Conn, api API) []Channel {
+	log.Println("slack-logger insertChannels start")
+
+	newChannels := []Channel{}
+	for _, channel := range api.Channels {
+		stmt, _ := db.Prepare("insert into channels values (?, ?, ?)")
+		_, err := stmt.Run(channel.Id, channel.Name, channel.Created)
+		if err == nil {
+			newChannels = append(newChannels, channel)
+		}
+	}
+	return newChannels
+}
+
+func insertHistory(db mysql.Conn, api API) map[string]int {
+	log.Println("slack-logger insertHistory start")
+
+	updates := map[string]int{}
+
+	for _, channel := range api.Channels {
+		stmt, _ := db.Prepare("select last_update from channels where channel_id = ?")
+		row, _, _ := stmt.Exec(channel.Id)
+
+		lastUpdate := ""
+		for _, col := range row {
+			if col != nil {
+				lastUpdate = col.Str(0)
+			}
+			break
+		}
+
+		messages := api.GetChannelMessages(channel, lastUpdate)
 
 		if len(messages) > 0 {
-			updateChannels[channel.Name] = len(messages)
-		}
-		log.Println(channel.Id, channel.Name, len(messages), ts)
-
-		for _, message := range messages {
-			if _, err := stmt.Exec(channel.Id, message.Type, message.User, message.Text, message.Ts); err != nil {
-				// TODO: データ衝突時の処理を実装
+			for _, message := range messages {
+				if message.Ts > lastUpdate {
+					lastUpdate = message.Ts
+				}
+				stmt, _ := db.Prepare("insert into history values (?, ?, ?, ?, ?)")
+				stmt.Run(channel.Id, message.Type, message.User, message.Text, message.Ts)
 			}
-		}
 
-		tx.Commit()
-		stmt.Close()
-
-		stmt, _ = db.Prepare("SELECT max(ts) FROM history WHERE id = ?")
-		var tsNew string
-		stmt.QueryRow(channel.Id).Scan(&tsNew)
-		stmt.Close()
-
-		stmt, _ = db.Prepare("UPDATE channels SET ts = ? WHERE id = ?")
-		stmt.Exec(tsNew, channel.Id)
-		stmt.Close()
-	}
-}
-
-func insertChannels(db *sql.DB, channels []Channel) {
-	tx, err := db.Begin()
-	stmt, err := tx.Prepare("insert into channels(id, name) values(?, ?)")
-
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer stmt.Close()
-
-	for _, channel := range channels {
-		if _, err := stmt.Exec(channel.Id, channel.Name); err != nil {
-			// TODO: データ衝突時の処理を実装
+			stmt, _ = db.Prepare("update channels set last_update = ? where channel_id = ?")
+			stmt.Run(lastUpdate, channel.Id)
+			updates[channel.Id] = len(messages)
 		}
 	}
-	tx.Commit()
-}
 
-func createDBFile(fileName string) {
-	if _, err := os.Stat(fileName); err != nil {
-		os.Create(fileName)
-	}
-}
-
-func openDB(fileName string) (db *sql.DB, err error) {
-	createDBFile(fileName)
-	return sql.Open("sqlite3", fileName)
-}
-
-func createDBTable(db *sql.DB) {
-	stmt := `
-	create table if not exists channels (
-	id text not null primary key,
-	name text not null,
-	ts text
-	)
-	`
-	_, err := db.Exec(stmt)
-
-	if err != nil {
-		log.Println(err)
-	}
-
-	stmt = `
-	create table if not exists history (
-	id text not null,
-	type text not null,
-	user text not null,
-	text text,
-	ts text not null
-	)
-	`
-
-	_, err = db.Exec(stmt)
-
-	if err != nil {
-		log.Println(err)
-	}
-
-	stmt = "create index if not exists id_ts on history(id, ts)"
-
-	_, err = db.Exec(stmt)
-
-	if err != nil {
-		log.Println(err)
-	}
-}
-
-func getSlackAPI(values url.Values, endpoint string) (b []byte, err error) {
-	res, err := http.Get(BaseSlackURL + endpoint + "?" + values.Encode())
-
-	if err != nil {
-		return nil, err
-	} else {
-		defer res.Body.Close()
-		return ioutil.ReadAll(res.Body)
-	}
-}
-
-func getChannels() []Channel {
-	values := url.Values{
-		"token":  {token},
-		"pretty": {"1"},
-	}
-	b, _ := getSlackAPI(values, "channels.list")
-	data := new(ChannelsList)
-
-	if err := json.Unmarshal(b, data); err != nil {
-		log.Println("JSON Unmarshal error", err)
-		return nil
-	}
-
-	return data.Channels
-}
-
-func getChannelMessages(channel Channel, ts string) []Message {
-	values := url.Values{}
-	values.Add("token", token)
-	values.Add("channel", channel.Id)
-	values.Add("count", "1000")
-	if ts != "" {
-		values.Add("oldest", ts)
-	}
-	values.Add("pretty", "1")
-	b, _ := getSlackAPI(values, "channels.history")
-	data := new(ChannelHistory)
-
-	if err := json.Unmarshal(b, data); err != nil {
-		log.Println("JSON Unmarshal error", err)
-		return nil
-	}
-
-	return data.Messages
+	return updates
 }
